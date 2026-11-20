@@ -21,10 +21,10 @@
 
 在 Windows 克隆或 `git pull` 本仓库后，直接双击 **`convert-windows.bat`**。需要 Git for Windows 和 64 位 Python 3.11/3.12；BAT 自动创建独立的 `.venv-win`，安装 CPU PyTorch，下载 HF v2 索引器和配置文件，并调用固定 GitHub 转换器。
 
-双击后可粘贴你已下载的主模型、BF16 mmproj、输出路径；输入留空会自动下载或使用默认目录。已有 GGUF 无需再次下载，但必须通过上述官方文件的 SHA-256 校验。也可直接用 CMD：
+双击后可粘贴你已下载的主模型、BF16 mmproj、HF v2 `qsa-indexers.safetensors` 和输出路径。如果三份文件放在同一个目录，输入主模型路径后会自动识别另外两份文件，直接回车确认即可。已有文件通过 SHA-256 校验后就会复用，不会重新下载；默认目录里没有文件时才自动下载。也可直接用 CMD：
 
 ```bat
-convert-windows.bat --gguf "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --mmproj "D:\models\mmproj-Qwen3.8-27B-BF16.gguf" --output "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S-QSA-v2-mtp.ninfer"
+convert-windows.bat --gguf "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --mmproj "D:\models\mmproj-Qwen3.8-27B-BF16.gguf" --indexer "D:\models\qsa-indexers.safetensors" --output "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S-QSA-v2-mtp.ninfer"
 ```
 
 `convert-windows.bat --auto` 使用默认路径自动下载及转换；`--no-vision` 只转换文本+MTP；`--check-only` 只跑转换预检；`--plan` 不下载、不转换，仅显示计划。Windows 和 Linux 可共用 `.ninfer` 权重文件，独立复制虚拟环境并非必要。转换成功后保留 `.ninfer`、`.ninfer.conversion.json` 和 `.ninfer.qsa-v2.json` 三个同名文件（最后一个记录 v2 来源哈希及真实 artifact 检查）。把它们放共享模型盘，在 Ubuntu 的 `qsa.env` 中填写 `QSA_MODEL`，运行 `bash qsa.sh install` 和 `bash qsa.sh start`，不必在 Ubuntu 再转换。

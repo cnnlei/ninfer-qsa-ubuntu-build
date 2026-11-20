@@ -35,6 +35,14 @@ def ask_path(prompt: str, default: Path) -> Path:
     return Path(answer).expanduser().resolve() if answer else default.resolve()
 
 
+def sibling_or_default(explicit: Path | None, gguf: Path, filename: str, default: Path) -> Path:
+    """Reuse files next to the chosen GGUF, without searching other directories."""
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    sibling = gguf.parent / filename
+    return sibling.resolve() if sibling.is_file() else default.resolve()
+
+
 def setup_environment(source: Path, venv: Path) -> Path:
     if not shutil.which("git"):
         raise RuntimeError("未找到 Git，请安装 Git for Windows 后重新运行：https://git-scm.com/download/win")
@@ -71,6 +79,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gguf", type=Path, help="existing exact ISTA IQ3_S MTP file (empty = auto-download)")
     parser.add_argument("--mmproj", type=Path, help="existing official ISTA BF16 mmproj")
+    parser.add_argument("--indexer", type=Path, help="existing exact HF v2 qsa-indexers.safetensors")
     parser.add_argument("--output", type=Path, help="output .ninfer path, including filename")
     parser.add_argument("--asset-dir", type=Path, default=ROOT / "assets")
     parser.add_argument("--base-model-dir", type=Path, help="optional existing official Qwen config/tokenizer files")
@@ -82,12 +91,14 @@ def main() -> None:
     parser.add_argument("--plan", action="store_true", help="show exact model and indexer sources, no downloads or writes")
     args = parser.parse_args()
     assets = args.asset_dir.expanduser().resolve()
-    raw = assets / "hf-v2" / hf_v2.INDEXER_FILE
+    raw_default = assets / "hf-v2" / hf_v2.INDEXER_FILE
     indexer = assets / "hf-v2" / "indexer_tensors-v2-ninfer.safetensors"
     base = (args.base_model_dir or assets / "base-model").resolve()
     prepared = assets / "base-model-qsa-v2"
     gguf = (args.gguf or assets / "inputs" / hf_v2.GGUF_FILE).resolve()
-    mmproj = (args.mmproj or assets / "inputs" / hf_v2.MMPROJ_FILE).resolve()
+    mmproj_default = assets / "inputs" / hf_v2.MMPROJ_FILE
+    mmproj = sibling_or_default(args.mmproj, gguf, hf_v2.MMPROJ_FILE, mmproj_default)
+    raw = sibling_or_default(args.indexer, gguf, hf_v2.INDEXER_FILE, raw_default)
     out_name = OUTPUT_NAME if not args.no_mtp else OUTPUT_NAME.replace("-mtp", "")
     if args.no_vision:
         out_name = out_name.replace(".ninfer", "-text.ninfer")
@@ -103,9 +114,12 @@ def main() -> None:
     if not args.auto and not args.plan and not sys.argv[1:]:
         gguf = ask_path("请输入已有 IQ3_S-mtp GGUF 路径；留空自动下载", gguf)
         if vision:
-            mmproj = ask_path("请输入已有 ISTA BF16 mmproj 路径；留空自动下载", mmproj)
+            mmproj = sibling_or_default(args.mmproj, gguf, hf_v2.MMPROJ_FILE, mmproj_default)
+            mmproj = ask_path("请输入已有 ISTA BF16 mmproj 路径；回车使用默认路径", mmproj)
+        raw = sibling_or_default(args.indexer, gguf, hf_v2.INDEXER_FILE, raw_default)
+        raw = ask_path("请输入已下载的 HF v2 qsa-indexers.safetensors 路径；回车使用默认路径", raw)
         output = ask_path("请输入输出 .ninfer 的完整路径（可选共享模型盘）", output)
-    print(f"文本输入: {gguf}\n视觉输入: {mmproj if vision else '不启用'}\n组件: {components}\n输出: {output}\n", flush=True)
+    print(f"文本输入: {gguf}\n视觉输入: {mmproj if vision else '不启用'}\nQSA v2 输入: {raw}\n组件: {components}\n输出: {output}\n", flush=True)
     if args.plan:
         return
     if sys.version_info < (3, 11) or struct.calcsize("P") != 8:

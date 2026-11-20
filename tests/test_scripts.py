@@ -61,6 +61,20 @@ class ScriptsTest(unittest.TestCase):
         self.assertIn("text,vision,mtp", plan)
         self.assertFalse((self.path / "v2 model.ninfer").exists())
 
+    def test_windows_reuse_all_three_inputs(self):
+        gguf = self.path / v2.GGUF_FILE
+        mmproj = self.path / v2.MMPROJ_FILE
+        indexer = self.path / v2.INDEXER_FILE
+        for f in (gguf, mmproj, indexer):
+            f.write_bytes(b"mock existing file")
+        command = ["python3", str(ROOT / "scripts/convert_windows.py"), "--plan", "--auto", "--gguf", str(gguf)]
+        plan = subprocess.run(command, check=True, capture_output=True, text=True).stdout
+        self.assertIn(f"视觉输入: {mmproj}", plan)
+        self.assertIn(f"QSA v2 输入: {indexer}", plan)
+        other = self.path / "explicit source.safetensors"
+        plan = subprocess.run(command + ["--indexer", str(other)], check=True, capture_output=True, text=True).stdout
+        self.assertIn(f"QSA v2 输入: {other}", plan)
+
     def test_existing_v1_not_reused(self):
         old = self.path / "old.ninfer"
         old.write_bytes(b"old-v1")

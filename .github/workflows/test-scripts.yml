@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - name: Test BAT launcher and Windows paths without model downloads
         shell: cmd
-        run: convert-windows.bat --plan --auto --gguf "D:\Model Files\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --output "D:\Model Files\qsa-v2.ninfer"
+        run: convert-windows.bat --plan --auto --gguf "D:\Model Files\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --indexer "D:\Model Files\qsa-indexers.safetensors" --output "D:\Model Files\qsa-v2.ninfer"
 
   hf-v2-indexer:
     runs-on: ubuntu-24.04
