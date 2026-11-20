@@ -17,6 +17,9 @@ PREFIX = f"ninfer-linux-x64-cuda13.4-sm120a-{COMMIT[:12]}"
 spec = importlib.util.spec_from_file_location("install_runtime", ROOT / "scripts/install_runtime.py")
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+v2_spec = importlib.util.spec_from_file_location("hf_v2", ROOT / "scripts/hf_v2.py")
+v2 = importlib.util.module_from_spec(v2_spec)
+v2_spec.loader.exec_module(v2)
 
 
 class ScriptsTest(unittest.TestCase):
@@ -46,6 +49,27 @@ class ScriptsTest(unittest.TestCase):
         self.assertNotIn("--kv-headroom-mib", args)
         self.assertNotIn("--rope-yarn", args)
         self.assertTrue(args[1].endswith("model with spaces.ninfer"))
+
+    def test_windows_plan_and_hf_mapping(self):
+        self.assertEqual(v2.hf_name(3, "key_norm"), "model.language_model.layers.3.self_attn._qsa_indexer.k_block_norm")
+        self.assertEqual(v2.hf_name(3, "key_pre_norm"), "model.language_model.layers.3.self_attn._qsa_indexer.k_norm")
+        plan = subprocess.run(["python3", str(ROOT / "scripts/convert_windows.py"), "--plan", "--auto",
+                               "--output", str(self.path / "v2 model.ninfer")],
+                              check=True, capture_output=True, text=True).stdout
+        self.assertIn(v2.GGUF_FILE, plan)
+        self.assertIn(v2.INDEXER_SHA, plan)
+        self.assertIn("text,vision,mtp", plan)
+        self.assertFalse((self.path / "v2 model.ninfer").exists())
+
+    def test_existing_v1_not_reused(self):
+        old = self.path / "old.ninfer"
+        old.write_bytes(b"old-v1")
+        Path(str(old) + ".conversion.json").write_text("{}")
+        self.append(f"QSA_OUTPUT_MODEL={shlex.quote(str(old))}")
+        result = self.run_cli("convert", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("v2", result.stderr)
+        self.assertEqual(old.read_bytes(), b"old-v1")
 
     def test_plan_yarn_and_resident(self):
         self.append("QSA_CONTEXT=524288\nQSA_KV_RESIDENT=all\nQSA_MTP=0\nQSA_VISION=0")

@@ -1,5 +1,6 @@
 qsa.env
 .venv/
+.venv-win/
 runtime/
 downloads/
 upstream/
@@ -9,6 +10,7 @@ run/
 *.gguf
 *.ninfer
 *.ninfer.conversion.json
+*.ninfer.qsa-v2.json
 *.safetensors
 *.key
 *.log

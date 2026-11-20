@@ -8,6 +8,7 @@ on:
       - '.github/workflows/test-scripts.yml'
       - 'qsa.sh'
       - 'qsa.env.example'
+      - 'convert-windows.bat'
       - 'scripts/**'
       - 'tests/**'
 
@@ -26,6 +27,31 @@ jobs:
         run: |
           bash -n qsa.sh
           bash -n qsa.env.example
-          python3 -m py_compile scripts/install_runtime.py scripts/fetch_base_metadata.py tests/test_scripts.py
+          python3 -m py_compile scripts/install_runtime.py scripts/fetch_base_metadata.py scripts/hf_v2.py scripts/convert_windows.py tests/test_scripts.py
       - name: Test deployment and split-archive handling without a GPU
         run: python3 -m unittest discover -s tests -v
+
+  windows-plan:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test BAT launcher and Windows paths without model downloads
+        shell: cmd
+        run: convert-windows.bat --plan --auto --gguf "D:\Model Files\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --output "D:\Model Files\qsa-v2.ninfer"
+
+  hf-v2-indexer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Python venv prerequisites
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-venv git curl
+      - name: Verify real HF v2 weights with the exact NInfer converter reader
+        run: |
+          bash qsa.sh init
+          bash qsa.sh prepare

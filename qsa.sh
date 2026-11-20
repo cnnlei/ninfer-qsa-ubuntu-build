@@ -8,7 +8,8 @@ readonly UPSTREAM_COMMIT=29c79545429f03c2ec9d74370b3b2c59b62cca0d
 readonly UPSTREAM_TAG=win-cuda13.4-29c79545429f
 readonly BUILD_REPO=cnnlei/ninfer-qsa-ubuntu-build
 readonly BUILD_NAME="ninfer-linux-x64-cuda13.4-sm120a-${UPSTREAM_COMMIT:0:12}"
-readonly TENSORS_URL="https://github.com/$UPSTREAM_REPO/releases/download/Ninfer-all-Qwen3.8-27B-QSA"
+readonly GGUF_NAME=Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
+readonly MMPROJ_NAME=mmproj-Qwen3.8-27B-BF16.gguf
 cd "$QSA_ROOT"
 
 die() { printf '错误: %s\n' "$*" >&2; exit 1; }
@@ -22,8 +23,8 @@ usage() {
     '  bash qsa.sh doctor           检查系统、GPU、运行包和模型' \
     '  bash qsa.sh install          下载 GitHub Release、校验、解压' \
     '  bash qsa.sh install --offline  使用 downloads/ 中的校验文件和分卷' \
-    '  bash qsa.sh prepare          安装独立转换环境、下载小型元数据/索引器' \
-    '  bash qsa.sh convert [--check]  GGUF → 带 QSA 的 .ninfer（不覆盖旧模型）' \
+    '  bash qsa.sh prepare          独立转换环境 + HF v2 索引器 + 小型元数据' \
+    '  bash qsa.sh convert [--check]  自动下载 ISTA IQ3_S MTP → QSA v2 .ninfer' \
     '  bash qsa.sh all              install → convert → start' \
     '  bash qsa.sh plan             预览启动参数（不运行）' \
     '  bash qsa.sh start|stop|restart|status' \
@@ -39,21 +40,21 @@ if [[ -f "$CONFIG" ]]; then
   source "$CONFIG"
 fi
 
-: "${QSA_GGUF:=}"
-: "${QSA_MMPROJ:=}"
-: "${QSA_OUTPUT_MODEL:=$QSA_ROOT/models/Qwen3.8-27B-QSA-IQ3_S-mtp.ninfer}"
+: "${QSA_ASSETS_DIR:=$QSA_ROOT/assets}"
+: "${QSA_GGUF:=$QSA_ASSETS_DIR/inputs/$GGUF_NAME}"
+: "${QSA_MMPROJ:=$QSA_ASSETS_DIR/inputs/$MMPROJ_NAME}"
+: "${QSA_OUTPUT_MODEL:=$QSA_ROOT/models/Qwen3.8-27B-GSQ-RCO-IQ3_S-QSA-v2-mtp.ninfer}"
 : "${QSA_MODEL:=$QSA_OUTPUT_MODEL}"
 : "${QSA_BASE_MODEL_DIR:=$QSA_ROOT/assets/base-model}"
 : "${QSA_DONOR_GGUF:=}"
 : "${QSA_SOURCE_DIR:=$QSA_ROOT/upstream}"
 : "${QSA_RUNTIME_ROOT:=$QSA_ROOT/runtime}"
 : "${QSA_DOWNLOAD_DIR:=$QSA_ROOT/downloads}"
-: "${QSA_ASSETS_DIR:=$QSA_ROOT/assets}"
 : "${QSA_VENV:=$QSA_ROOT/.venv}"
 : "${QSA_STATE_DIR:=$QSA_ROOT/run}"
 : "${QSA_SERVE_BIN:=$QSA_RUNTIME_ROOT/$BUILD_NAME/ninfer-serve}"
 : "${QSA_RELEASE_TAG:=}"
-: "${QSA_MODEL_ID:=qwen3.8-27b-qsa}"
+: "${QSA_MODEL_ID:=qwen3.8-27b-qsa-v2-iq3s}"
 : "${QSA_BIND:=127.0.0.1}"
 : "${QSA_PORT:=18201}"
 : "${QSA_GPU:=0}"
@@ -91,8 +92,9 @@ done
 readonly PID_RECORD="$QSA_STATE_DIR/server.pid"
 readonly LOG_FILE="$QSA_STATE_DIR/server.log"
 readonly VENV_PYTHON="$QSA_VENV/bin/python"
-readonly INDEXER="$QSA_ASSETS_DIR/indexer_tensors.safetensors"
-readonly GDN_CONTROLS="$QSA_ASSETS_DIR/gdn_controls_bf16.safetensors"
+readonly RAW_INDEXER="$QSA_ASSETS_DIR/hf-v2/qsa-indexers.safetensors"
+readonly INDEXER="$QSA_ASSETS_DIR/hf-v2/indexer_tensors-v2-ninfer.safetensors"
+readonly PREPARED_BASE="$QSA_ASSETS_DIR/base-model-qsa-v2"
 
 require_config() { [[ -f "$CONFIG" ]] || die '先运行 bash qsa.sh init 并编辑 qsa.env'; }
 require_linux() {
@@ -110,7 +112,7 @@ init_config() {
   mkdir -p -- "$(dirname -- "$CONFIG")"
   (umask 077; set -o noclobber; cp --no-clobber -- "$QSA_ROOT/qsa.env.example" "$CONFIG")
   chmod 600 -- "$CONFIG"
-  notice "已生成 $CONFIG，请修改 GGUF/mmproj 文件路径。"
+  notice "已生成 $CONFIG；默认自动下载指定 ISTA IQ3_S MTP / BF16 mmproj，也可填写已有文件路径。"
 }
 
 deps() {
@@ -151,20 +153,6 @@ install_runtime() {
   python3 "$QSA_ROOT/scripts/install_runtime.py" "${args[@]}"
 }
 
-fetch_tensor() {
-  local name=$1 destination=$2 expected=$3 actual
-  mkdir -p -- "$(dirname -- "$destination")"
-  if [[ ! -e "$destination" ]]; then
-    notice "下载 $name"
-    curl --fail --location --retry 4 --connect-timeout 30 --output "$destination.part" "$TENSORS_URL/$name"
-    actual=$(sha256sum -- "$destination.part")
-    [[ "${actual%% *}" == "$expected" ]] || die "校验失败：$destination.part"
-    mv -- "$destination.part" "$destination"
-  fi
-  actual=$(sha256sum -- "$destination")
-  [[ "${actual%% *}" == "$expected" ]] || die "校验失败：$destination，请移走这个文件后重试"
-}
-
 prepare_converter() {
   need git; need python3; need curl; need sha256sum
   if [[ ! -e "$QSA_SOURCE_DIR" ]]; then
@@ -188,12 +176,13 @@ prepare_converter() {
     "$VENV_PYTHON" -m pip install --disable-pip-version-check numpy gguf safetensors huggingface_hub jinja2
   fi
   "$VENV_PYTHON" -c 'import torch, numpy, gguf, safetensors, huggingface_hub, jinja2; print("Python converter dependencies: OK")'
-  fetch_tensor indexer_tensors.safetensors "$INDEXER" 05e347c1202c8d76d2575940854bb3c402ac96b0abf32a04d846c31f28640815
-  fetch_tensor gdn_controls_bf16.safetensors "$GDN_CONTROLS" 756eb0d4453fd4c5ddf3c53368b96e65898634062af4533798a658cb022e3fba
-  local -a metadata_args=("$QSA_BASE_MODEL_DIR")
+  # Do NOT use the GitHub release's older indexer or external GDN tensor assets.
+  "$VENV_PYTHON" "$QSA_ROOT/scripts/hf_v2.py" indexer --source "$RAW_INDEXER" \
+    --output "$INDEXER" --upstream "$QSA_SOURCE_DIR"
+  local -a metadata_args=("$QSA_BASE_MODEL_DIR" --prepared-dir "$PREPARED_BASE")
   [[ "$QSA_VISION" != 1 ]] || metadata_args+=(--vision)
   "$VENV_PYTHON" "$QSA_ROOT/scripts/fetch_base_metadata.py" "${metadata_args[@]}"
-  notice '转换环境和索引器已准备就绪。'
+  notice '转换环境和 Hugging Face v2 索引器已准备并通过上游读取器校验。'
 }
 
 convert_model() {
@@ -202,17 +191,22 @@ convert_model() {
   local check=0
   if [[ "${1:-}" == --check ]]; then check=1; shift; fi
   (( $# == 0 )) || die 'convert 只支持可选参数 --check'
-  [[ -f "$QSA_GGUF" ]] || die "GGUF 文件不存在：$QSA_GGUF"
-  if [[ "$QSA_VISION" == 1 ]]; then [[ -f "$QSA_MMPROJ" ]] || die "视觉文件不存在：$QSA_MMPROJ；纯文本可将 QSA_VISION=0"; fi
-  if [[ -n "$QSA_DONOR_GGUF" ]]; then [[ -f "$QSA_DONOR_GGUF" ]] || die "QSA donor 不存在：$QSA_DONOR_GGUF"; fi
+  [[ -z "$QSA_DONOR_GGUF" ]] || die '此版固定使用 HF v2 索引器，请从 qsa.env 移除旧 QSA_DONOR_GGUF 设置'
   if (( ! check )) && [[ -e "$QSA_OUTPUT_MODEL" ]]; then
-    [[ -f "$QSA_OUTPUT_MODEL.conversion.json" && -s "$QSA_OUTPUT_MODEL" ]] || die '输出已存在但没有转换报告，拒绝覆盖；请更换 QSA_OUTPUT_MODEL'
-    notice "已有转换模型：$QSA_OUTPUT_MODEL（不会重复转换或覆盖）"
+    [[ -f "$QSA_OUTPUT_MODEL.conversion.json" && -f "$QSA_OUTPUT_MODEL.qsa-v2.json" && -s "$QSA_OUTPUT_MODEL" ]] || die '输出已存在但缺少 v2 来源证明，拒绝覆盖或误用 v1；请更换 QSA_OUTPUT_MODEL'
+    local -a verify_args=(--model "$QSA_OUTPUT_MODEL")
+    [[ "$QSA_MTP" != 1 ]] || verify_args+=(--mtp)
+    [[ "$QSA_VISION" != 1 ]] || verify_args+=(--vision)
+    python3 "$QSA_ROOT/scripts/hf_v2.py" verify-marker "${verify_args[@]}"
+    notice "已有已校验的 v2 模型：$QSA_OUTPUT_MODEL（不重复转换或覆盖）"
     return
   fi
   [[ "$QSA_OUTPUT_MODEL" == *.ninfer ]] || die 'QSA_OUTPUT_MODEL 必须是 .ninfer 路径'
-  [[ ! -e "$QSA_OUTPUT_MODEL.conversion.json" || $check == 1 ]] || die '同名转换报告已存在；请更换 QSA_OUTPUT_MODEL'
+  [[ ( ! -e "$QSA_OUTPUT_MODEL.conversion.json" && ! -e "$QSA_OUTPUT_MODEL.qsa-v2.json" ) || $check == 1 ]] || die '同名转换报告已存在；请更换 QSA_OUTPUT_MODEL'
   prepare_converter
+  local -a input_args=(--gguf "$QSA_GGUF")
+  [[ "$QSA_VISION" != 1 ]] || input_args+=(--mmproj "$QSA_MMPROJ")
+  "$VENV_PYTHON" "$QSA_ROOT/scripts/hf_v2.py" model-inputs "${input_args[@]}"
   local components=text target="$QSA_OUTPUT_MODEL"
   [[ "$QSA_VISION" != 1 ]] || components+=,vision
   [[ "$QSA_MTP" != 1 ]] || components+=,mtp
@@ -222,23 +216,28 @@ convert_model() {
     [[ ! -e "$target" ]] || die "临时输出已存在：$target"
     notice "CPU 转换中：$QSA_GGUF -> $QSA_OUTPUT_MODEL"
   fi
-  local -a args=(--base-model "$(realpath -- "$QSA_BASE_MODEL_DIR")" --gguf "$(realpath -- "$QSA_GGUF")"
+  local -a args=(--base-model "$(realpath -- "$PREPARED_BASE")" --gguf "$(realpath -- "$QSA_GGUF")"
       --components "$components" --out "$(realpath -m -- "$target")" --device cpu --name "$QSA_MODEL_ID")
   if [[ "$QSA_VISION" == 1 ]]; then args+=(--vision "$(realpath -- "$QSA_MMPROJ")"); fi
-  if [[ -n "$QSA_DONOR_GGUF" ]]; then args+=(--donor "$(realpath -- "$QSA_DONOR_GGUF")"); fi
   if [[ "$QSA_PROPOSAL_HEAD" == 0 ]]; then args+=(--no-proposal); else args+=(--proposal); fi
   (( ! check )) || args+=(--check-only)
-  local indexer_path gdn_path
-  indexer_path=$(realpath -- "$INDEXER"); gdn_path=$(realpath -- "$GDN_CONTROLS")
-  if ! (cd "$QSA_SOURCE_DIR" && NINFER_QSA_INDEXER_ASSET="$indexer_path" NINFER_GDN_CONTROLS_BF16="$gdn_path" \
-        "$VENV_PYTHON" tools/convert/convert_qsa27b.py "${args[@]}"); then
+  local indexer_path
+  indexer_path=$(realpath -- "$INDEXER")
+  if ! (cd "$QSA_SOURCE_DIR" && env -u QSA_INDEXER_GGUF NINFER_QSA_INDEXER_ASSET="$indexer_path" \
+        NINFER_GDN_CONTROLS_BF16=off "$VENV_PYTHON" tools/convert/convert_qsa27b.py "${args[@]}"); then
     die "模型转换失败，原模型未被改动。若生成了临时输出，请检查 $target"
   fi
   if (( check )); then return; fi
   [[ -s "$target" && -s "$target.conversion.json" ]] || die '转换器未生成完整模型及报告'
-  [[ ! -e "$QSA_OUTPUT_MODEL" && ! -e "$QSA_OUTPUT_MODEL.conversion.json" ]] || die '目标路径在转换期间已出现，拒绝覆盖'
+  local -a record_args=(--model "$target" --upstream "$QSA_SOURCE_DIR")
+  [[ "$QSA_MTP" != 1 ]] || record_args+=(--mtp)
+  [[ "$QSA_VISION" != 1 ]] || record_args+=(--vision)
+  "$VENV_PYTHON" "$QSA_ROOT/scripts/hf_v2.py" record-model "${record_args[@]}"
+  [[ ! -e "$QSA_OUTPUT_MODEL" && ! -e "$QSA_OUTPUT_MODEL.conversion.json" && ! -e "$QSA_OUTPUT_MODEL.qsa-v2.json" ]] || die '目标路径在转换期间已出现，拒绝覆盖'
   mv --no-clobber -- "$target.conversion.json" "$QSA_OUTPUT_MODEL.conversion.json"
   [[ ! -e "$target.conversion.json" ]] || die '转换报告移至目标位置失败'
+  mv --no-clobber -- "$target.qsa-v2.json" "$QSA_OUTPUT_MODEL.qsa-v2.json"
+  [[ ! -e "$target.qsa-v2.json" ]] || die 'v2 来源证明移至目标位置失败'
   mv --no-clobber -- "$target" "$QSA_OUTPUT_MODEL"
   [[ -s "$QSA_OUTPUT_MODEL" && ! -e "$target" ]] || die '模型移至目标位置失败'
   notice "转换完成：$QSA_OUTPUT_MODEL"
@@ -387,6 +386,13 @@ start_server() {
   require_config; require_linux; need curl
   if running; then notice "已经运行 (PID $SERVER_PID)。使用 restart 应用新配置"; return; fi
   [[ -f "$QSA_MODEL" && -s "$QSA_MODEL" ]] || die "模型不存在：$QSA_MODEL，先运行 convert"
+  if [[ "$QSA_MODEL" == "$QSA_OUTPUT_MODEL" ]]; then
+    [[ -f "$QSA_MODEL.qsa-v2.json" ]] || die '缺少 v2 来源证明；请先用 convert 生成正确模型'
+    local -a marker_args=(--model "$QSA_MODEL" --quick)
+    [[ "$QSA_MTP" != 1 ]] || marker_args+=(--mtp)
+    [[ "$QSA_VISION" != 1 ]] || marker_args+=(--vision)
+    python3 "$QSA_ROOT/scripts/hf_v2.py" verify-marker "${marker_args[@]}"
+  fi
   make_args 1
   check_gpu
   check_runtime
