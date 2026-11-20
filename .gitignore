@@ -1,0 +1,16 @@
+qsa.env
+.venv/
+runtime/
+downloads/
+upstream/
+assets/
+models/
+run/
+*.gguf
+*.ninfer
+*.ninfer.conversion.json
+*.safetensors
+*.key
+*.log
+__pycache__/
+
