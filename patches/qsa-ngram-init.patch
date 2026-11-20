@@ -1,0 +1,14 @@
+diff --git a/src/models/qwen3_5/program/prefix/qsa_continuation_program.cpp b/src/models/qwen3_5/program/prefix/qsa_continuation_program.cpp
+index d724e9e..7db8b2c 100644
+--- a/src/models/qwen3_5/program/prefix/qsa_continuation_program.cpp
++++ b/src/models/qwen3_5/program/prefix/qsa_continuation_program.cpp
+@@ -618,7 +618,9 @@ runtime::ContextTransactionReserveStatus ProgramImpl::qsa_reserve_materialization(
+         // spliced into the text hidden state. A store image carries the media it was written with
+         // (`qsa_choose_reuse` compares `block_extras`), so an item wholly inside the resumed
+         // prefix is already in the lane's planes and must not be encoded again.
+         PreparedPromptData staged_prompt = prompt;
++        // Like the hybrid admission path, give NGram drafting the prepared history.
++        if (ngram_draft_window != 0) { take_ngram_index(request, staged_prompt); }
+         std::optional<VisionPrefillPlan> vision;
+         if (plan.vision_control_plan) {
+             VisionPrefillPlan vision_plan;

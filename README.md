@@ -3,6 +3,7 @@
 针对 Ubuntu x86_64、RTX 5070 Ti 16GB（也适用于其他消费级 RTX 50）的 **SM120a** 单架构预编译版本。GitHub Actions 在 Ubuntu 24.04 上用 CUDA 13.4.3 / GCC 13 编译，运行包发布到本仓库的 [Releases](https://github.com/cnnlei/ninfer-qsa-ubuntu-build/releases)，本地不用重新编译 CUDA。
 
 - 上游：[13thblade/ninfer-all-QSA](https://github.com/13thblade/ninfer-all-QSA)，固定提交 [`29c79545429f`](https://github.com/13thblade/ninfer-all-QSA/commit/29c79545429f03c2ec9d74370b3b2c59b62cca0d)。
+- Linux 运行包使用基于该提交的确定性补丁提交 `e73f8eae7668`（[补丁](patches/qsa-ngram-init.patch)），修复 QSA 流式入口遗漏 NGram 历史初始化、导致 warmup 退出的问题。模型转换器仍固定原始 `29c79545429f`，无需重转已有模型。修复包使用新目录，保留已安装的旧运行包；发布完成后 `git pull`、`bash qsa.sh install`、`bash qsa.sh start` 即可升级，现有 `qsa.env` 不会被更改。如手动固定了旧 `QSA_RELEASE_TAG`，请将其改为 `ubuntu24.04-sm120a-e73f8eae7668-ngram-init-v1`。
 - [Actions 编译进度](https://github.com/cnnlei/ninfer-qsa-ubuntu-build/actions)。Release 只有在编译、架构检查、依赖检查与归档校验成功后才发布。
 - GitHub runner 没有 NVIDIA GPU，因此编译与 CLI 验证不等于真实 GPU 推理验证。首次启动后请运行 `test`。
 - 需要 Ubuntu 24.04 或更新版本（glibc ≥ 2.39）及兼容 CUDA 13.x 的 NVIDIA 驱动。Ubuntu 22.04 不适合此二进制。运行包带 CUDA 用户态库，不安装或替换系统显卡驱动，也不需要完整 CUDA Toolkit。
@@ -113,7 +114,7 @@ bash qsa.sh all
 
 - 若已有真正的 QSA `.ninfer`，在 `qsa.env` 填写 `QSA_MODEL`，并按模型组件调整 `QSA_MTP` 和 `QSA_VISION`，运行 `install` + `start` 即可，不需要 `convert`。
 - 手动从 Release 下载所有 `.tar.gz.NNN` 分卷和对应 `SHA256SUMS-*.txt` 到 `downloads/`，执行 `bash qsa.sh install --offline`。安装时校验归档以及包内每个文件，下载或已经安装的运行包不会被静默覆盖。
-- 更新脚本用 `git pull`；私有 `qsa.env` 不在仓库中。需要重编译时在 Actions 运行 `Build Ubuntu 24.04 RTX 50 (SM120a)` 工作流。编译版本与下载器、转换器必须使用同一个固定 upstream commit。
+- 更新脚本用 `git pull`；私有 `qsa.env` 不在仓库中。需要重编译时在 Actions 运行 `Build Ubuntu 24.04 RTX 50 (SM120a)` 工作流。运行包下载器校验补丁后的确定性提交，转换器及模型来源校验保持原上游提交。
 
 独立脚本自测（使用模拟服务，不占 GPU、不需要模型或联网）：`python3 -m unittest discover -s tests -v`。
 

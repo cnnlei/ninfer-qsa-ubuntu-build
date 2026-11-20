@@ -7,7 +7,12 @@ readonly UPSTREAM_REPO=13thblade/ninfer-all-QSA
 readonly UPSTREAM_COMMIT=29c79545429f03c2ec9d74370b3b2c59b62cca0d
 readonly UPSTREAM_TAG=win-cuda13.4-29c79545429f
 readonly BUILD_REPO=cnnlei/ninfer-qsa-ubuntu-build
-readonly BUILD_NAME="ninfer-linux-x64-cuda13.4-sm120a-${UPSTREAM_COMMIT:0:12}"
+# Converter/model provenance remains pinned to UPSTREAM_COMMIT. The runtime is
+# its deterministic NGram admission fix; a different package name keeps the old
+# installed release intact and prevents it from being mistaken for the fix.
+readonly RUNTIME_COMMIT=e73f8eae7668c9cc27485be8b5cd46a459346d87
+readonly BUILD_NAME="ninfer-linux-x64-cuda13.4-sm120a-${RUNTIME_COMMIT:0:12}"
+readonly RUNTIME_RELEASE_TAG="ubuntu24.04-sm120a-${RUNTIME_COMMIT:0:12}-ngram-init-v1"
 readonly GGUF_NAME=Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
 readonly MMPROJ_NAME=mmproj-Qwen3.8-27B-BF16.gguf
 cd "$QSA_ROOT"
@@ -53,7 +58,7 @@ fi
 : "${QSA_VENV:=$QSA_ROOT/.venv}"
 : "${QSA_STATE_DIR:=$QSA_ROOT/run}"
 : "${QSA_SERVE_BIN:=$QSA_RUNTIME_ROOT/$BUILD_NAME/ninfer-serve}"
-: "${QSA_RELEASE_TAG:=}"
+: "${QSA_RELEASE_TAG:=$RUNTIME_RELEASE_TAG}"
 : "${QSA_MODEL_ID:=qwen3.8-27b-qsa-v2-iq3s}"
 : "${QSA_BIND:=127.0.0.1}"
 : "${QSA_PORT:=18201}"
@@ -145,7 +150,7 @@ lock_state() {
 
 install_runtime() {
   require_linux; need python3; need curl
-  local -a args=(--repo "$BUILD_REPO" --commit "$UPSTREAM_COMMIT"
+  local -a args=(--repo "$BUILD_REPO" --commit "$RUNTIME_COMMIT"
       --runtime-root "$QSA_RUNTIME_ROOT" --downloads "$QSA_DOWNLOAD_DIR")
   [[ -z "$QSA_RELEASE_TAG" ]] || args+=(--tag "$QSA_RELEASE_TAG")
   if [[ "${1:-}" == --offline ]]; then args+=(--offline); shift; fi

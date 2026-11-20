@@ -13,7 +13,7 @@ import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMIT = "29c79545429f03c2ec9d74370b3b2c59b62cca0d"
+COMMIT = "e73f8eae7668c9cc27485be8b5cd46a459346d87"
 PREFIX = f"ninfer-linux-x64-cuda13.4-sm120a-{COMMIT[:12]}"
 spec = importlib.util.spec_from_file_location("install_runtime", ROOT / "scripts/install_runtime.py")
 installer = importlib.util.module_from_spec(spec)
@@ -50,6 +50,7 @@ class ScriptsTest(unittest.TestCase):
         self.assertIn("--qwen38-27b-qsa", args)
         self.assertEqual(args[args.index("--kv-capacity") + 1], "262144")
         self.assertEqual(args[args.index("--kv-resident") + 1], "8192")
+        self.assertTrue(args[0].endswith(f"{PREFIX}/ninfer-serve"))
         self.assertEqual(args[args.index("--default-reasoning-effort") + 1], "xhigh")
         self.assertNotIn("--reasoning-effort", args)
         self.assertNotIn("--kv-headroom-mib", args)

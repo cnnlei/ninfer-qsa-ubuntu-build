@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/build-linux.yml'
+      - 'patches/qsa-ngram-init.patch'
 
 permissions:
   contents: read
@@ -17,6 +18,8 @@ concurrency:
 env:
   UPSTREAM_REPO: 13thblade/ninfer-all-QSA
   UPSTREAM_COMMIT: 29c79545429f03c2ec9d74370b3b2c59b62cca0d
+  RUNTIME_COMMIT: e73f8eae7668c9cc27485be8b5cd46a459346d87
+  RUNTIME_RELEASE_TAG: ubuntu24.04-sm120a-e73f8eae7668-ngram-init-v1
   CUDA_ROOT: /usr/local/cuda-13.4
 
 jobs:
@@ -45,6 +48,11 @@ jobs:
           df -h /
           free -h
 
+      - name: Check out the build recipe and runtime patch
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Check out the exact QSA source revision
         uses: actions/checkout@v7.0.1
         with:
@@ -53,6 +61,28 @@ jobs:
           path: upstream
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Apply and verify the deterministic QSA NGram admission fix
+        working-directory: upstream
+        env:
+          GIT_AUTHOR_NAME: NInfer QSA Build
+          GIT_AUTHOR_EMAIL: qsa-build@example.invalid
+          GIT_COMMITTER_NAME: NInfer QSA Build
+          GIT_COMMITTER_EMAIL: qsa-build@example.invalid
+          GIT_AUTHOR_DATE: '@1795132800 +0000'
+          GIT_COMMITTER_DATE: '@1795132800 +0000'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          patch="$GITHUB_WORKSPACE/patches/qsa-ngram-init.patch"
+          git apply --check "$patch"
+          git apply --index "$patch"
+          git diff --cached --check
+          actual="$(git -c commit.gpgsign=false -c i18n.commitEncoding=UTF-8 commit-tree "$(git write-tree)" -p "$UPSTREAM_COMMIT" -m 'fix(qsa): initialize ngram history during streamed admission')"
+          test "$actual" = "$RUNTIME_COMMIT"
+          git update-ref --no-deref HEAD "$actual" "$UPSTREAM_COMMIT"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git show --stat --oneline HEAD
 
       - name: Install Ubuntu build dependencies and CUDA Toolkit 13.4.3
         run: |
@@ -82,7 +112,7 @@ jobs:
         working-directory: upstream
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RUNTIME_COMMIT"
           bash scripts/fetch-media-sources.sh
           webui="$(bash scripts/fetch-webui.sh | sed -n 's/^configure with -DNINFER_WEBUI_DIR=//p')"
           test -n "$webui"
@@ -121,14 +151,16 @@ jobs:
           # The upstream packager includes the redistributable CUDA libraries,
           # licences, build metadata and media sources. No GPU driver stub is shipped.
           NINFER_BUILD_ROOT="$PWD/build-release" python3 scripts/package-linux-release.py
-          name="ninfer-linux-x64-cuda13.4-sm120a-${UPSTREAM_COMMIT:0:12}"
+          name="ninfer-linux-x64-cuda13.4-sm120a-${RUNTIME_COMMIT:0:12}"
           test -s "dist/$name/BUILD-INFO.json"
           grep -F -- '--qwen38-27b-qsa' "dist/$name/help/ninfer-serve.txt"
           grep -F -- '--kv-resident' "dist/$name/help/ninfer-serve.txt"
           grep -F -- '--qsa-top-blocks' "dist/$name/help/ninfer-serve.txt"
+          grep -F -- '--default-reasoning-effort' "dist/$name/help/ninfer-serve.txt"
           (cd dist && sha256sum -c "SHA256SUMS-$name.txt")
           cp "dist/$name/BUILD-INFO.json" dist/BUILD-INFO.json
           cp MODIFICATIONS.md dist/QSA-MODIFICATIONS.md
+          cp "$GITHUB_WORKSPACE/patches/qsa-ngram-init.patch" dist/QSA-NGRAM-INIT.patch
 
       - name: Publish verified archives as a GitHub Release
         working-directory: upstream
@@ -136,19 +168,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          name="ninfer-linux-x64-cuda13.4-sm120a-${UPSTREAM_COMMIT:0:12}"
-          tag="ubuntu24.04-sm120a-${UPSTREAM_COMMIT:0:12}-r${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          name="ninfer-linux-x64-cuda13.4-sm120a-${RUNTIME_COMMIT:0:12}"
+          tag="$RUNTIME_RELEASE_TAG"
           shopt -s nullglob
           archives=("dist/$name.tar.gz."*)
           (( ${#archives[@]} > 0 ))
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NInfer QSA - Ubuntu 24.04 x86_64 / RTX 50 (sm_120a)" \
-            --notes "Source: https://github.com/$UPSTREAM_REPO/commit/$UPSTREAM_COMMIT
+            --title "NInfer QSA - Ubuntu 24.04 RTX 50 / NGram initialization fix" \
+            --notes "Upstream base and unchanged converter revision: https://github.com/$UPSTREAM_REPO/commit/$UPSTREAM_COMMIT
+          Runtime source revision: $RUNTIME_COMMIT (deterministic commit of the included QSA-NGRAM-INIT.patch).
+          Fixes missing prepared NGram history in the QSA streamed admission path. No model weights, precision, attention windows, MTP or NGram draft settings are changed. Existing converted artifacts remain compatible; no reconversion needed.
           Toolchain: CUDA 13.4.3, GCC 13, Ubuntu 24.04. Dedicated SM120a build (RTX 50).
           All archive hashes, dependency closure, SM120a device images and CLI flags verified.
           GPU inference is NOT tested on a GitHub hosted CPU runner. Ubuntu 24.04 or newer, compatible NVIDIA driver required.
           Upstream licenses and FFmpeg/dav1d sources are included in the runtime. No model weights or personal configuration are included." \
-            --latest "${archives[@]}" "dist/SHA256SUMS-$name.txt" dist/BUILD-INFO.json dist/QSA-MODIFICATIONS.md
+            --latest "${archives[@]}" "dist/SHA256SUMS-$name.txt" dist/BUILD-INFO.json dist/QSA-MODIFICATIONS.md dist/QSA-NGRAM-INIT.patch
 
       - name: Preserve build diagnostics
         if: failure()
