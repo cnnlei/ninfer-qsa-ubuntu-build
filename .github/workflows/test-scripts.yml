@@ -1,0 +1,31 @@
+name: Test Ubuntu deployment scripts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-scripts.yml'
+      - 'qsa.sh'
+      - 'qsa.env.example'
+      - 'scripts/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Shell and Python syntax checks
+        run: |
+          bash -n qsa.sh
+          bash -n qsa.env.example
+          python3 -m py_compile scripts/install_runtime.py scripts/fetch_base_metadata.py tests/test_scripts.py
+      - name: Test deployment and split-archive handling without a GPU
+        run: python3 -m unittest discover -s tests -v

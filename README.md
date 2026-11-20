@@ -85,6 +85,8 @@ bash qsa.sh all
 - 手动从 Release 下载所有 `.tar.gz.NNN` 分卷和对应 `SHA256SUMS-*.txt` 到 `downloads/`，执行 `bash qsa.sh install --offline`。安装时校验归档以及包内每个文件，下载或已经安装的运行包不会被静默覆盖。
 - 更新脚本用 `git pull`；私有 `qsa.env` 不在仓库中。需要重编译时在 Actions 运行 `Build Ubuntu 24.04 RTX 50 (SM120a)` 工作流。编译版本与下载器、转换器必须使用同一个固定 upstream commit。
 
+独立脚本自测（使用模拟服务，不占 GPU、不需要模型或联网）：`python3 -m unittest discover -s tests -v`。
+
 ## 来源和许可
 
 本仓库仅编译和部署上游开源项目，没有修改其推理数学。QSA 分支由 13thblade 开发，模型/索引器来源见其 [MODIFICATIONS.md](https://github.com/13thblade/ninfer-all-QSA/blob/29c79545429f03c2ec9d74370b3b2c59b62cca0d/MODIFICATIONS.md)。上游 Apache-2.0 许可、CUDA 运行库许可与 FFmpeg/dav1d 对应源码保存在 Release 运行包内。

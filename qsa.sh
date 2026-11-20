@@ -478,7 +478,7 @@ test_api() {
   local body key
   local -a headers=(-H 'Content-Type: application/json')
   if [[ -n "$QSA_API_KEY_FILE" ]]; then key=$(<"$QSA_API_KEY_FILE"); headers+=(-H "Authorization: Bearer $key"); fi
-  body=$(python3 -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"messages":[{"role":"user","content":"1+1等于几？只回答数字。"}],"temperature":0,"max_tokens":32,"stream":False},ensure_ascii=False))' "$QSA_MODEL_ID")
+  body=$(python3 -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"messages":[{"role":"user","content":"1+1等于几？只回答数字。"}],"temperature":0,"max_tokens":64,"reasoning_effort":"none","stream":False},ensure_ascii=False))' "$QSA_MODEL_ID")
   curl --fail-with-body --silent --show-error --max-time 120 "${headers[@]}" --data "$body" "$(api_url)/v1/chat/completions"
   printf '\n'
 }
