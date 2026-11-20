@@ -1,0 +1,1 @@
+# ninfer-qsa-ubuntu-build
