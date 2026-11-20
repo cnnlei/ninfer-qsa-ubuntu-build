@@ -52,18 +52,34 @@ def setup_environment(source: Path, venv: Path) -> Path:
         raise RuntimeError(f"源码目录版本不匹配，拒绝覆盖：{source}")
     if git_output(source, "status", "--porcelain", "--untracked-files=no"):
         raise RuntimeError(f"转换器源码存在本地修改，拒绝使用：{source}")
-    python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    if not python.is_file():
-        run([sys.executable, "-m", "venv", venv])
+    portable = ROOT / ".portable" / "python" / "python.exe"
+    is_portable = os.name == "nt" and Path(sys.executable).resolve() == portable.resolve()
+    if is_portable:
+        # A relocatable CPython distribution already isolates the dependencies.
+        # Do not create a venv: its absolute base-interpreter path would make
+        # a ready-to-use ZIP fail after moving it to the user's drive.
+        python = portable
+    else:
+        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if not python.is_file():
+            run([sys.executable, "-m", "venv", venv])
     probe = "import sys,torch,numpy,gguf,safetensors,huggingface_hub,jinja2; assert sys.version_info >= (3,11)"
     if subprocess.run([str(python), "-c", probe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
-        print("安装独立虚拟环境的 CPU 版 PyTorch、转换器依赖…", flush=True)
-        run([python, "-m", "pip", "install", "--disable-pip-version-check", "torch",
+        print("准备项目目录中的 CPU 版 PyTorch、转换器依赖…", flush=True)
+        options = ["--no-user", "--only-binary=:all:", "--no-compile"] if is_portable else []
+        run([python, "-m", "pip", "install", "--disable-pip-version-check", *options, "torch",
              "--index-url", "https://download.pytorch.org/whl/cpu"])
-        run([python, "-m", "pip", "install", "--disable-pip-version-check", "numpy", "gguf",
+        run([python, "-m", "pip", "install", "--disable-pip-version-check", *options, "numpy", "gguf",
              "safetensors", "huggingface_hub", "jinja2"])
     run([python, "-c", probe])
     return python
+
+
+def prepare_metadata(python: Path, base: Path, prepared: Path, *, vision: bool) -> None:
+    meta = [python, ROOT / "scripts/fetch_base_metadata.py", base, "--prepared-dir", prepared]
+    if vision:
+        meta += ["--vision"]
+    run(meta)
 
 
 def conversion_flags(mtp: bool, vision: bool):
@@ -88,6 +104,7 @@ def main() -> None:
     parser.add_argument("--proposal", action="store_true", help="also pack optional proposal head (more weight memory)")
     parser.add_argument("--auto", action="store_true", help="no path prompts; use defaults/CLI paths")
     parser.add_argument("--check-only", action="store_true", help="upstream preflight only, no .ninfer output")
+    parser.add_argument("--prepare-only", action="store_true", help="prepare converter, CPU dependencies and metadata; no model weights")
     parser.add_argument("--plan", action="store_true", help="show exact model and indexer sources, no downloads or writes")
     args = parser.parse_args()
     assets = args.asset_dir.expanduser().resolve()
@@ -124,6 +141,13 @@ def main() -> None:
         return
     if sys.version_info < (3, 11) or struct.calcsize("P") != 8:
         raise RuntimeError("需要 64 位 Python 3.11 或 3.12（或兼容的更新版本）")
+    source = ROOT / "upstream"
+    venv = ROOT / ".venv-win"
+    if args.prepare_only:
+        python = setup_environment(source, venv)
+        prepare_metadata(python, base, prepared, vision=vision)
+        print(f"转换环境准备完成：{python}；没有下载或转换模型权重。")
+        return
     if output.suffix.lower() != ".ninfer":
         raise RuntimeError("输出路径必须以 .ninfer 结尾")
     if not args.check_only and output.exists():
@@ -136,14 +160,9 @@ def main() -> None:
     if not args.check_only and (report.exists() or hf_v2.provenance_path(output).exists()):
         raise RuntimeError(f"输出路径有旧转换报告，请选择新路径：{output}")
 
-    source = ROOT / "upstream"
-    venv = ROOT / ".venv-win"
     python = setup_environment(source, venv)
     run([python, ROOT / "scripts/hf_v2.py", "indexer", "--source", raw, "--output", indexer, "--upstream", source])
-    meta = [python, ROOT / "scripts/fetch_base_metadata.py", base, "--prepared-dir", prepared]
-    if vision:
-        meta += ["--vision"]
-    run(meta)
+    prepare_metadata(python, base, prepared, vision=vision)
     inputs = [python, ROOT / "scripts/hf_v2.py", "model-inputs", "--gguf", gguf]
     if vision:
         inputs += ["--mmproj", mmproj]

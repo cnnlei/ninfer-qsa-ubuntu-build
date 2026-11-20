@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMIT = "29c79545429f03c2ec9d74370b3b2c59b62cca0d"
@@ -20,6 +21,9 @@ spec.loader.exec_module(installer)
 v2_spec = importlib.util.spec_from_file_location("hf_v2", ROOT / "scripts/hf_v2.py")
 v2 = importlib.util.module_from_spec(v2_spec)
 v2_spec.loader.exec_module(v2)
+portable_spec = importlib.util.spec_from_file_location("package_windows_portable", ROOT / "scripts/package_windows_portable.py")
+portable = importlib.util.module_from_spec(portable_spec)
+portable_spec.loader.exec_module(portable)
 
 
 class ScriptsTest(unittest.TestCase):
@@ -160,6 +164,23 @@ http.server.HTTPServer(('127.0.0.1',int(sys.argv[sys.argv.index('--port')+1])),H
 
 
 class ArchiveTest(unittest.TestCase):
+    def test_windows_portable_zip_keeps_runtime_and_excludes_models_caches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / "source bundle"
+            for relative in portable.FILES + portable.REQUIRED + (
+                    ".portable/cache/secret-not-packed.txt", ".portable/downloads/large.tar.gz",
+                    "assets/inputs/model.gguf", "assets/base-model/.cache/token"):
+                path = bundle / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"test")
+            archive = root / "converter.zip"
+            sums = portable.package(bundle, archive)
+            self.assertEqual(sums.read_text().split()[0], hashlib.sha256(archive.read_bytes()).hexdigest())
+            with zipfile.ZipFile(archive) as zipped:
+                self.assertEqual({name.removeprefix(portable.PREFIX + "/") for name in zipped.namelist()},
+                                 set(portable.FILES + portable.REQUIRED))
+
     def test_manifest_and_split_extraction(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

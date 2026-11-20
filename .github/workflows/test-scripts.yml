@@ -9,6 +9,7 @@ on:
       - 'qsa.sh'
       - 'qsa.env.example'
       - 'convert-windows.bat'
+      - 'convert-windows-portable.bat'
       - 'scripts/**'
       - 'tests/**'
 
@@ -27,7 +28,7 @@ jobs:
         run: |
           bash -n qsa.sh
           bash -n qsa.env.example
-          python3 -m py_compile scripts/install_runtime.py scripts/fetch_base_metadata.py scripts/hf_v2.py scripts/convert_windows.py tests/test_scripts.py
+          python3 -m py_compile scripts/install_runtime.py scripts/fetch_base_metadata.py scripts/hf_v2.py scripts/convert_windows.py scripts/package_windows_portable.py tests/test_scripts.py
       - name: Test deployment and split-archive handling without a GPU
         run: python3 -m unittest discover -s tests -v
 

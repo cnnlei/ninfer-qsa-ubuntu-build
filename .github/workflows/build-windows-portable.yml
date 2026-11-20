@@ -1,0 +1,113 @@
+name: Build Windows portable converter (x64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-windows-portable.yml'
+      - 'convert-windows-portable.bat'
+      - 'scripts/convert_windows.py'
+      - 'scripts/fetch_base_metadata.py'
+      - 'scripts/hf_v2.py'
+      - 'scripts/package_windows_portable.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-portable-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONNOUSERSITE: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUTF8: '1'
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare the relocatable Python, Git, CPU PyTorch, pinned converter and metadata
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP 'NInfer-QSA-Windows-Portable'
+          New-Item -ItemType Directory -Path "$bundle\scripts" -Force | Out-Null
+          Copy-Item -LiteralPath 'convert-windows-portable.bat','README.md' -Destination $bundle
+          Copy-Item -LiteralPath 'scripts\convert_windows.py','scripts\fetch_base_metadata.py','scripts\hf_v2.py' -Destination "$bundle\scripts"
+          Push-Location -LiteralPath $bundle
+          try {
+            & $env:ComSpec /d /c convert-windows-portable.bat --prepare-only --auto
+            if ($LASTEXITCODE -ne 0) { throw 'Portable bootstrap failed' }
+          } finally { Pop-Location }
+          $python = "$bundle\.portable\python\python.exe"
+          @"
+          Portable CPU converter for Windows x64; built from $env:GITHUB_SHA
+          NInfer source: https://github.com/13thblade/ninfer-all-QSA/tree/29c79545429f03c2ec9d74370b3b2c59b62cca0d
+          Python 3.12.16 (Python Build Standalone): https://github.com/astral-sh/python-build-standalone/releases/tag/20261110
+          Python SHA-256: e23fe5b16926de1d81661b1a97352e89fb167549c55a6825796ccd0f32ec7f1b
+          MinGit 2.56.1, source and license: https://github.com/git-for-windows/git/releases/tag/v2.56.1.windows.1
+          MinGit SHA-256: 4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd
+          Python, Git, NInfer and Python-package licenses are included in their distribution directories.
+          Input model weights are NOT included. Use the three pinned HF files listed in README.md.
+          "@ | Set-Content -LiteralPath "$bundle\PORTABLE-INFO.txt" -Encoding utf8
+          & $python -m pip freeze --all | Add-Content -LiteralPath "$bundle\PORTABLE-INFO.txt" -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to record Python package versions' }
+          & $python -c "import torch; assert torch.version.cuda is None; assert float(torch.ones(2,dtype=torch.bfloat16).sum())==2; print('CPU PyTorch:',torch.__version__)"
+          if ($LASTEXITCODE -ne 0) { throw 'CPU PyTorch smoke test failed' }
+
+      - name: Verify the real HF v2 indexer through the Windows converter
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP 'NInfer-QSA-Windows-Portable'
+          $testDir = Join-Path $env:RUNNER_TEMP 'qsa-indexer-test'
+          New-Item -ItemType Directory -Path $testDir -Force | Out-Null
+          $env:HF_HOME = Join-Path $testDir 'hf-cache'
+          $env:PYTHONNOUSERSITE = '1'
+          $env:PYTHONDONTWRITEBYTECODE = '1'
+          & "$bundle\.portable\python\python.exe" "$bundle\scripts\hf_v2.py" indexer --source "$testDir\qsa-indexers.safetensors" --output "$testDir\adapted.safetensors" --upstream "$bundle\upstream"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows HF v2 adapter validation failed' }
+
+      - name: Package only the converter, portable runtimes and metadata
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP 'NInfer-QSA-Windows-Portable'
+          $archive = Join-Path $env:RUNNER_TEMP 'qsa-release\NInfer-QSA-Windows-Portable-x64.zip'
+          & "$bundle\.portable\python\python.exe" scripts/package_windows_portable.py $bundle $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
+
+      - name: Test the actual ZIP after moving it to a path with spaces, without system Python or Git
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP 'NInfer-QSA-Windows-Portable'
+          $archive = Join-Path $env:RUNNER_TEMP 'qsa-release\NInfer-QSA-Windows-Portable-x64.zip'
+          $relocated = Join-Path $env:RUNNER_TEMP 'Relocated portable test'
+          & "$bundle\.portable\python\python.exe" -m zipfile -e $archive $relocated
+          if ($LASTEXITCODE -ne 0) { throw 'ZIP extraction failed' }
+          $app = Join-Path $relocated 'NInfer-QSA-Windows-Portable'
+          $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:HF_HUB_OFFLINE = '1'
+          $env:PIP_NO_INDEX = '1'
+          Push-Location -LiteralPath $app
+          try {
+            & $env:ComSpec /d /c convert-windows-portable.bat --prepare-only --auto
+            if ($LASTEXITCODE -ne 0) { throw 'Relocated offline runtime failed' }
+            & $env:ComSpec /d /c convert-windows-portable.bat --plan --auto --gguf 'D:\Model Files\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf' --output 'D:\Model Files\qsa-v2.ninfer'
+            if ($LASTEXITCODE -ne 0) { throw 'Relocated launcher failed' }
+            if (Test-Path -LiteralPath '.venv-win') { throw 'Portable launcher unexpectedly created a venv' }
+          } finally { Pop-Location }
+
+      - name: Publish the verified Windows portable ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "windows-portable-r$($env:GITHUB_RUN_NUMBER).$($env:GITHUB_RUN_ATTEMPT)"
+          $dist = Join-Path $env:RUNNER_TEMP 'qsa-release'
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'NInfer QSA v2 - Windows x64 portable converter' --notes 'Unzip and double-click convert-windows-portable.bat. Includes relocatable Python 3.12, MinGit, CPU PyTorch, the pinned NInfer converter and Qwen metadata. No Python/Git installation, WinGet, CUDA toolkit or administrator access required. No model weights included. Validated the HF v2 adapter and the relocated offline environment on Windows; a full 27B conversion was not run in CI.' --latest=false "$dist\NInfer-QSA-Windows-Portable-x64.zip" "$dist\SHA256SUMS-Windows-Portable.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }

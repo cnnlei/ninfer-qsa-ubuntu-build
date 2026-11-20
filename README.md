@@ -19,6 +19,12 @@
 
 ## Windows：双击 BAT 转换，再到 Ubuntu 启动
 
+**推荐绿色版（免安装）：** 在 [GitHub Releases](https://github.com/cnnlei/ninfer-qsa-ubuntu-build/releases) 下载标题含 Windows x64 portable converter 的版本中的 `NInfer-QSA-Windows-Portable-x64.zip`，完整解压到例如 `D:\ninfer-qsa`，双击 `convert-windows-portable.bat`。ZIP 已包含 Python 3.12 x64、MinGit、CPU PyTorch、转换依赖、固定 GitHub 转换器及官方 Qwen 配置/分词器元数据；不包含模型权重。无需安装 Python/Git、WinGet 或 CUDA Toolkit，不写入系统 PATH、不需要管理员权限。三份 HF 输入文件已下载时，可离线转换。请保留完整目录，不要只复制 BAT 或在 ZIP 内直接运行。
+
+如果你已克隆本仓库，也可 `git pull` 后双击 `convert-windows-portable.bat`；首次自动下载两份固定 SHA-256 的便携运行时并在 `.portable` 中准备依赖，无需系统安装。在只有源代码的目录里使用 `--prepare-only` 可提前准备这些依赖及元数据（不下载模型权重）。绿色版不创建不可直接搬移的 Python venv，而是在便携 Python 的本地目录中安装依赖。可以将完整目录移至其他位置，再继续双击使用。
+
+普通版：
+
 在 Windows 克隆或 `git pull` 本仓库后，直接双击 **`convert-windows.bat`**。需要 Git for Windows 和 64 位 Python 3.11/3.12；BAT 自动创建独立的 `.venv-win`，安装 CPU PyTorch，下载 HF v2 索引器和配置文件，并调用固定 GitHub 转换器。
 
 如果 BAT 未找到 Python，双击运行时可选择 `Y` 通过 WinGet 安装官方 Python 3.11 x64，或者自行在 CMD/PowerShell 执行 `winget install -e --id Python.Python.3.11 --scope user --architecture x64` 后重新打开 BAT。已安装但不在 PATH 的常见目录会自动检测；自定义安装位置可在 CMD 使用 `set "QSA_PYTHON_EXE=D:\Python311\python.exe"` 后运行 BAT。
@@ -29,7 +35,7 @@
 convert-windows.bat --gguf "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --mmproj "D:\models\mmproj-Qwen3.8-27B-BF16.gguf" --indexer "D:\models\qsa-indexers.safetensors" --output "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S-QSA-v2-mtp.ninfer"
 ```
 
-`convert-windows.bat --auto` 使用默认路径自动下载及转换；`--no-vision` 只转换文本+MTP；`--check-only` 只跑转换预检；`--plan` 不下载、不转换，仅显示计划。Windows 和 Linux 可共用 `.ninfer` 权重文件，独立复制虚拟环境并非必要。转换成功后保留 `.ninfer`、`.ninfer.conversion.json` 和 `.ninfer.qsa-v2.json` 三个同名文件（最后一个记录 v2 来源哈希及真实 artifact 检查）。把它们放共享模型盘，在 Ubuntu 的 `qsa.env` 中填写 `QSA_MODEL`，运行 `bash qsa.sh install` 和 `bash qsa.sh start`，不必在 Ubuntu 再转换。
+绿色版和普通版支持相同的模型参数：`--auto` 使用默认路径自动下载及转换；`--no-vision` 只转换文本+MTP；`--check-only` 只跑转换预检；`--plan` 仅显示计划（不下载模型或转换）。Windows 和 Linux 可共用 `.ninfer` 权重文件，独立复制虚拟环境并非必要。转换成功后保留 `.ninfer`、`.ninfer.conversion.json` 和 `.ninfer.qsa-v2.json` 三个同名文件（最后一个记录 v2 来源哈希及真实 artifact 检查）。把它们放共享模型盘，在 Ubuntu 的 `qsa.env` 中填写 `QSA_MODEL`，运行 `bash qsa.sh install` 和 `bash qsa.sh start`，不必在 Ubuntu 再转换。
 
 ## Ubuntu 一条龙：克隆 → 转换 → 运行
 

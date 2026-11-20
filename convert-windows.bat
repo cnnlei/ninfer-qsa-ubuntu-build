@@ -103,6 +103,7 @@ goto done
 
 :missing
 echo No suitable 64-bit Python 3.11 or 3.12 was found.
+echo For a portable setup without installers, use convert-windows-portable.bat instead.
 echo Install with: winget install -e --id Python.Python.3.11 --scope user --architecture x64
 echo Or use the official installer: https://www.python.org/downloads/windows/
 echo If Python is installed elsewhere, set QSA_PYTHON_EXE to its full python.exe path.

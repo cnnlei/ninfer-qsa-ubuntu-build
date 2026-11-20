@@ -1,6 +1,8 @@
 qsa.env
 .venv/
 .venv-win/
+.portable/
+dist/
 runtime/
 downloads/
 upstream/
