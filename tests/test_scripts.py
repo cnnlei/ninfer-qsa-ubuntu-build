@@ -174,12 +174,18 @@ class ArchiveTest(unittest.TestCase):
                 path = bundle / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"test")
+            (bundle / "upstream/.git/refs/heads").mkdir(parents=True)
             archive = root / "converter.zip"
             sums = portable.package(bundle, archive)
             self.assertEqual(sums.read_text().split()[0], hashlib.sha256(archive.read_bytes()).hexdigest())
             with zipfile.ZipFile(archive) as zipped:
-                self.assertEqual({name.removeprefix(portable.PREFIX + "/") for name in zipped.namelist()},
+                self.assertEqual({entry.filename.removeprefix(portable.PREFIX + "/")
+                                  for entry in zipped.infolist() if not entry.is_dir()},
                                  set(portable.FILES + portable.REQUIRED))
+                self.assertIn(portable.PREFIX + "/upstream/.git/refs/heads/", zipped.namelist())
+                relocated = root / "relocated"
+                zipped.extractall(relocated)
+                self.assertTrue((relocated / portable.PREFIX / "upstream/.git/refs/heads").is_dir())
 
     def test_manifest_and_split_extraction(self):
         with tempfile.TemporaryDirectory() as temp:

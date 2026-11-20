@@ -48,10 +48,15 @@ def package(bundle: Path, archive: Path) -> Path:
             raise FileNotFoundError(bundle / relative)
     paths = [bundle / name for name in FILES]
     for relative in TREES:
-        for path in (bundle / relative).rglob("*"):
+        tree = bundle / relative
+        paths.append(tree)
+        for path in tree.rglob("*"):
             if path.is_symlink():
                 raise ValueError(f"Unexpected symlink in portable bundle: {path}")
-            if path.is_file():
+            # Git requires refs/ and objects/ directories even for a shallow
+            # detached checkout whose refs are packed. An archive of files only
+            # can therefore cease to be a repository after extraction.
+            if path.is_file() or path.is_dir():
                 paths.append(path)
     archive.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=3) as output:
@@ -67,7 +72,7 @@ def package(bundle: Path, archive: Path) -> Path:
     sums = archive.with_name("SHA256SUMS-Windows-Portable.txt")
     with sums.open("x", encoding="ascii", newline="\n") as stream:
         stream.write(f"{digest}  {archive.name}\n")
-    print(f"Portable archive: {archive} ({archive.stat().st_size:,} bytes; {len(paths):,} files)")
+    print(f"Portable archive: {archive} ({archive.stat().st_size:,} bytes; {len(paths):,} entries)")
     print(f"SHA-256: {digest}")
     return sums
 
