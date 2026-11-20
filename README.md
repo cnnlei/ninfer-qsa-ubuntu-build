@@ -21,6 +21,8 @@
 
 在 Windows 克隆或 `git pull` 本仓库后，直接双击 **`convert-windows.bat`**。需要 Git for Windows 和 64 位 Python 3.11/3.12；BAT 自动创建独立的 `.venv-win`，安装 CPU PyTorch，下载 HF v2 索引器和配置文件，并调用固定 GitHub 转换器。
 
+如果 BAT 未找到 Python，双击运行时可选择 `Y` 通过 WinGet 安装官方 Python 3.11 x64，或者自行在 CMD/PowerShell 执行 `winget install -e --id Python.Python.3.11 --scope user --architecture x64` 后重新打开 BAT。已安装但不在 PATH 的常见目录会自动检测；自定义安装位置可在 CMD 使用 `set "QSA_PYTHON_EXE=D:\Python311\python.exe"` 后运行 BAT。
+
 双击后可粘贴你已下载的主模型、BF16 mmproj、HF v2 `qsa-indexers.safetensors` 和输出路径。如果三份文件放在同一个目录，输入主模型路径后会自动识别另外两份文件，直接回车确认即可。已有文件通过 SHA-256 校验后就会复用，不会重新下载；默认目录里没有文件时才自动下载。也可直接用 CMD：
 
 ```bat

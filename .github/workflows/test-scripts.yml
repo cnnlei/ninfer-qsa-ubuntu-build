@@ -41,6 +41,12 @@ jobs:
       - name: Test BAT launcher and Windows paths without model downloads
         shell: cmd
         run: convert-windows.bat --plan --auto --gguf "D:\Model Files\Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf" --indexer "D:\Model Files\qsa-indexers.safetensors" --output "D:\Model Files\qsa-v2.ninfer"
+      - name: Test an explicitly selected interpreter
+        shell: pwsh
+        run: |
+          $env:QSA_PYTHON_EXE = (python -c "import sys; print(sys.executable)").Trim()
+          cmd /d /c convert-windows.bat --plan --auto
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   hf-v2-indexer:
     runs-on: ubuntu-24.04
