@@ -93,7 +93,10 @@ set "QSA_ARCHIVE_SHA=4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfe
 call :download
 if errorlevel 1 exit /b 1
 set "QSA_STAGE=%PORTABLE%\git-stage-%RANDOM%-%RANDOM%"
-powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:QSA_ARCHIVE -DestinationPath $env:QSA_STAGE"
+if not exist "%SystemRoot%\System32\tar.exe" exit /b 1
+mkdir "%QSA_STAGE%"
+if errorlevel 1 exit /b 1
+"%SystemRoot%\System32\tar.exe" -xf "%QSA_ARCHIVE%" -C "%QSA_STAGE%"
 if errorlevel 1 exit /b 1
 if not exist "%QSA_STAGE%\cmd\git.exe" exit /b 1
 "%QSA_STAGE%\cmd\git.exe" --version
@@ -105,7 +108,7 @@ exit /b %ERRORLEVEL%
 :download
 if not exist "%PORTABLE%\downloads" mkdir "%PORTABLE%\downloads"
 if not exist "%PORTABLE%\downloads" exit /b 1
-powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; $file=$env:QSA_ARCHIVE; if ((Test-Path -LiteralPath $file -PathType Leaf) -and ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq $env:QSA_ARCHIVE_SHA)) { Write-Host 'Reusing verified archive:' $file; exit 0 }; $part=$file+'.partial'; Write-Host 'Downloading portable runtime:' $env:QSA_ARCHIVE_URL; Invoke-WebRequest -UseBasicParsing -Uri $env:QSA_ARCHIVE_URL -OutFile $part; if ((Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash -ne $env:QSA_ARCHIVE_SHA) { throw 'Portable runtime SHA-256 mismatch' }; Move-Item -LiteralPath $part -Destination $file -Force; Write-Host 'SHA-256 OK:' $file"
+powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; function Get-Sha([string]$p) { $s=[IO.File]::OpenRead($p); $h=[Security.Cryptography.SHA256]::Create(); try { [BitConverter]::ToString($h.ComputeHash($s)).Replace('-','').ToLowerInvariant() } finally { $s.Dispose(); $h.Dispose() } }; $file=$env:QSA_ARCHIVE; if ([IO.File]::Exists($file) -and ((Get-Sha $file) -eq $env:QSA_ARCHIVE_SHA)) { Write-Host 'Reusing verified archive:' $file; exit 0 }; $part=$file+'.partial'; Write-Host 'Downloading portable runtime:' $env:QSA_ARCHIVE_URL; Invoke-WebRequest -UseBasicParsing -Uri $env:QSA_ARCHIVE_URL -OutFile $part; if ((Get-Sha $part) -ne $env:QSA_ARCHIVE_SHA) { throw 'Portable runtime SHA-256 mismatch' }; Move-Item -LiteralPath $part -Destination $file -Force; Write-Host 'SHA-256 OK:' $file"
 exit /b %ERRORLEVEL%
 
 :failed
