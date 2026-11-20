@@ -50,9 +50,17 @@ class ScriptsTest(unittest.TestCase):
         self.assertIn("--qwen38-27b-qsa", args)
         self.assertEqual(args[args.index("--kv-capacity") + 1], "262144")
         self.assertEqual(args[args.index("--kv-resident") + 1], "8192")
+        self.assertEqual(args[args.index("--default-reasoning-effort") + 1], "xhigh")
+        self.assertNotIn("--reasoning-effort", args)
         self.assertNotIn("--kv-headroom-mib", args)
         self.assertNotIn("--rope-yarn", args)
         self.assertTrue(args[1].endswith("model with spaces.ninfer"))
+
+    def test_plan_preserves_configured_reasoning_effort(self):
+        self.append('QSA_REASONING_EFFORT="max"')
+        args = shlex.split(self.run_cli("plan").stdout)
+        self.assertEqual(args[args.index("--default-reasoning-effort") + 1], "max")
+        self.assertNotIn("--reasoning-effort", args)
 
     def test_windows_plan_and_hf_mapping(self):
         self.assertEqual(v2.hf_name(3, "key_norm"), "model.language_model.layers.3.self_attn._qsa_indexer.k_block_norm")

@@ -300,7 +300,7 @@ make_args() {
     --use-alt-prefix-caching --host-cache-mib "$QSA_HOST_CACHE_MIB"
     --prefill-chunk "$QSA_PREFILL_CHUNK" --max-concurrency "$QSA_MAX_CONCURRENCY"
     --default-max-tokens "$QSA_MAX_OUTPUT" --embedding-residency "$QSA_EMBEDDING_RESIDENCY"
-    --reasoning-effort "$QSA_REASONING_EFFORT")
+    --default-reasoning-effort "$QSA_REASONING_EFFORT")
   # The pinned fork uses an explicit logical capacity for the streamed tier, not the
   # Device-resident Hybrid cache's free-VRAM auto allocator.
   if [[ "$QSA_KV_RESIDENT" == all ]]; then
