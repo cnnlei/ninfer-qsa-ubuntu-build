@@ -1,0 +1,164 @@
+name: Build Ubuntu 24.04 RTX 50 (SM120a)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-linux.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-sm120a-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: 13thblade/ninfer-all-QSA
+  UPSTREAM_COMMIT: 29c79545429f03c2ec9d74370b3b2c59b62cca0d
+  CUDA_ROOT: /usr/local/cuda-13.4
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check and free space on the disposable hosted runner
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test "$(uname -m)" = x86_64
+          df -h /
+          # These are unused SDK caches on GitHub's disposable VM, not repository files.
+          if (( $(df -BG --output=avail / | tail -1 | tr -cd '0-9') < 42 )); then
+            for sdk in /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache; do
+              if [[ -d "$sdk" ]]; then sudo rm -rf -- "$sdk"; fi
+            done
+          fi
+          df -h /
+          free -h
+
+      - name: Check out the exact QSA source revision
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: 13thblade/ninfer-all-QSA
+          ref: 29c79545429f03c2ec9d74370b3b2c59b62cca0d
+          path: upstream
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Ubuntu build dependencies and CUDA Toolkit 13.4.3
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build pkg-config \
+            meson nasm zlib1g-dev libcurl4-openssl-dev patchelf \
+            python3 python3-venv ca-certificates curl
+          keyring="$RUNNER_TEMP/cuda-keyring.deb"
+          curl --fail --location --retry 3 --output "$keyring" \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i "$keyring"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cuda-toolkit-13-4=13.4.3-1
+          # Use the upstream-qualified CMake release and the pinned toolkit.
+          python3 -m venv "$RUNNER_TEMP/ninfer-cmake"
+          "$RUNNER_TEMP/ninfer-cmake/bin/pip" install --disable-pip-version-check cmake==3.31.10
+          echo "$RUNNER_TEMP/ninfer-cmake/bin" >> "$GITHUB_PATH"
+          echo "$CUDA_ROOT/bin" >> "$GITHUB_PATH"
+          "$CUDA_ROOT/bin/nvcc" --version
+          "$CUDA_ROOT/bin/nvcc" --version | grep -F 'V13.4.92'
+          test -f "$CUDA_ROOT/EULA.txt"
+          df -h /
+
+      - name: Configure for Blackwell sm_120a
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          bash scripts/fetch-media-sources.sh
+          webui="$(bash scripts/fetch-webui.sh | sed -n 's/^configure with -DNINFER_WEBUI_DIR=//p')"
+          test -n "$webui"
+          test -d "$webui"
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=/usr/bin/gcc-13 \
+            -DCMAKE_CXX_COMPILER=/usr/bin/g++-13 \
+            -DCMAKE_CUDA_COMPILER="$CUDA_ROOT/bin/nvcc" \
+            -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-13 \
+            -DCMAKE_CUDA_ARCHITECTURES=120a \
+            -DNINFER_SHARED_RUNTIME=ON \
+            -DNINFER_BUILD_APPS=ON \
+            -DNINFER_BUILD_BENCHMARKS=ON \
+            -DBUILD_TESTING=OFF \
+            -DNINFER_WEBUI_DIR="$webui"
+
+      - name: Calculate compiler parallelism
+        id: capacity
+        working-directory: upstream
+        run: python3 .github/scripts/check-build-capacity.py --jobs 4
+
+      - name: Compile NInfer QSA executables
+        working-directory: upstream
+        env:
+          BUILD_JOBS: ${{ steps.capacity.outputs.jobs }}
+        run: |
+          set -euo pipefail
+          cmake --build build-release --parallel "$BUILD_JOBS" --target \
+            ninfer ninfer-serve ninfer_bench ninfer-calibrate ninfer-perplexity ninfer-ngram-profile
+
+      - name: Package portable runtime and check CUDA architecture, libraries and CLI
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          # The upstream packager includes the redistributable CUDA libraries,
+          # licences, build metadata and media sources. No GPU driver stub is shipped.
+          NINFER_BUILD_ROOT="$PWD/build-release" python3 scripts/package-linux-release.py
+          name="ninfer-linux-x64-cuda13.4-sm120a-${UPSTREAM_COMMIT:0:12}"
+          test -s "dist/$name/BUILD-INFO.json"
+          grep -F -- '--qwen38-27b-qsa' "dist/$name/help/ninfer-serve.txt"
+          grep -F -- '--kv-resident' "dist/$name/help/ninfer-serve.txt"
+          grep -F -- '--qsa-top-blocks' "dist/$name/help/ninfer-serve.txt"
+          (cd dist && sha256sum -c "SHA256SUMS-$name.txt")
+          cp "dist/$name/BUILD-INFO.json" dist/BUILD-INFO.json
+          cp MODIFICATIONS.md dist/QSA-MODIFICATIONS.md
+
+      - name: Publish verified archives as a GitHub Release
+        working-directory: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name="ninfer-linux-x64-cuda13.4-sm120a-${UPSTREAM_COMMIT:0:12}"
+          tag="ubuntu24.04-sm120a-${UPSTREAM_COMMIT:0:12}-r${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          shopt -s nullglob
+          archives=("dist/$name.tar.gz."*)
+          (( ${#archives[@]} > 0 ))
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "NInfer QSA - Ubuntu 24.04 x86_64 / RTX 50 (sm_120a)" \
+            --notes "Source: https://github.com/$UPSTREAM_REPO/commit/$UPSTREAM_COMMIT
+          Toolchain: CUDA 13.4.3, GCC 13, Ubuntu 24.04. Dedicated SM120a build (RTX 50).
+          All archive hashes, dependency closure, SM120a device images and CLI flags verified.
+          GPU inference is NOT tested on a GitHub hosted CPU runner. Ubuntu 24.04 or newer, compatible NVIDIA driver required.
+          Upstream licenses and FFmpeg/dav1d sources are included in the runtime. No model weights or personal configuration are included." \
+            --latest "${archives[@]}" "dist/SHA256SUMS-$name.txt" dist/BUILD-INFO.json dist/QSA-MODIFICATIONS.md
+
+      - name: Preserve build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: qsa-linux-build-diagnostics-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            upstream/build-release/CMakeCache.txt
+            upstream/build-release/CMakeFiles/CMakeConfigureLog.yaml
+            upstream/build-release/.ninja_log
+          if-no-files-found: ignore
+          retention-days: 3
